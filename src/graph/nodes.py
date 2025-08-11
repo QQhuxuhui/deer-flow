@@ -134,6 +134,18 @@ def planner_node(
             return Command(goto="reporter")
         else:
             return Command(goto="__end__")
+    
+    # Fix missing step_type fields - add fallback logic
+    if isinstance(curr_plan, dict) and "steps" in curr_plan:
+        for step in curr_plan["steps"]:
+            if "step_type" not in step:
+                # Infer step_type based on need_search field
+                if step.get("need_search", True):
+                    step["step_type"] = "research"
+                else:
+                    step["step_type"] = "processing"
+                logger.info(f"Added missing step_type '{step['step_type']}' for step: {step.get('title', 'Unknown')}")
+    
     if isinstance(curr_plan, dict) and curr_plan.get("has_enough_context"):
         logger.info("Planner response has enough context.")
         new_plan = Plan.model_validate(curr_plan)
@@ -192,6 +204,17 @@ def human_feedback_node(
             return Command(goto="reporter")
         else:
             return Command(goto="__end__")
+
+    # Fix missing step_type fields in human feedback node as well
+    if isinstance(new_plan, dict) and "steps" in new_plan:
+        for step in new_plan["steps"]:
+            if "step_type" not in step:
+                # Infer step_type based on need_search field
+                if step.get("need_search", True):
+                    step["step_type"] = "research"
+                else:
+                    step["step_type"] = "processing"
+                logger.info(f"Added missing step_type '{step['step_type']}' for step: {step.get('title', 'Unknown')}")
 
     return Command(
         update={
@@ -365,7 +388,7 @@ async def _execute_agent_step(
             )
         )
 
-    # Invoke the agent
+    # Invoke the agent with enhanced error handling
     default_recursion_limit = 25
     try:
         env_value_str = os.getenv("AGENT_RECURSION_LIMIT", str(default_recursion_limit))
@@ -389,30 +412,54 @@ async def _execute_agent_step(
         recursion_limit = default_recursion_limit
 
     logger.info(f"Agent input: {agent_input}")
-    result = await agent.ainvoke(
-        input=agent_input, config={"recursion_limit": recursion_limit}
-    )
+    
+    try:
+        result = await agent.ainvoke(
+            input=agent_input, config={"recursion_limit": recursion_limit}
+        )
 
-    # Process the result
-    response_content = result["messages"][-1].content
-    logger.debug(f"{agent_name.capitalize()} full response: {response_content}")
+        # Process the result
+        response_content = result["messages"][-1].content
+        logger.debug(f"{agent_name.capitalize()} full response: {response_content}")
 
-    # Update the step with the execution result
-    current_step.execution_res = response_content
-    logger.info(f"Step '{current_step.title}' execution completed by {agent_name}")
+        # Update the step with the execution result
+        current_step.execution_res = response_content
+        logger.info(f"Step '{current_step.title}' execution completed by {agent_name}")
 
-    return Command(
-        update={
-            "messages": [
-                HumanMessage(
-                    content=response_content,
-                    name=agent_name,
-                )
-            ],
-            "observations": observations + [response_content],
-        },
-        goto="research_team",
-    )
+        return Command(
+            update={
+                "messages": [
+                    HumanMessage(
+                        content=response_content,
+                        name=agent_name,
+                    )
+                ],
+                "observations": observations + [response_content],
+            },
+            goto="research_team",
+        )
+    
+    except Exception as e:
+        # Enhanced error handling for tool validation and other issues
+        error_msg = str(e)
+        logger.error(f"Agent execution failed: {error_msg}")
+        
+        # Provide fallback response for the step
+        fallback_response = f"Error occurred during {agent_name} execution: {error_msg}. Step could not be completed."
+        current_step.execution_res = fallback_response
+        
+        return Command(
+            update={
+                "messages": [
+                    HumanMessage(
+                        content=fallback_response,
+                        name=agent_name,
+                    )
+                ],
+                "observations": observations + [fallback_response],
+            },
+            goto="research_team",
+        )
 
 
 async def _setup_and_execute_agent_step(

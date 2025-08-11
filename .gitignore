@@ -15,10 +15,10 @@ static/browser_history/*.gif
 venv/
 
 # Environment variables
-.env
+# .env
 
 # user conf
-conf.yaml
+# conf.yaml
 
 .idea/
 .langgraph_api/

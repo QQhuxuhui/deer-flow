@@ -1,0 +1,10 @@
+{
+  "dependencies": ["./"],
+  "graphs": {
+    "rag_agent": "./rag_agent.py:rag_agent",
+    "python_agent": "./python_agent.py:python_agent",
+    "sql_agent": "./sql_agent.py:sql_agent",
+    "data_agent": "./data_agent.py:supervisor"
+  },
+  "env": "./.env"
+}
