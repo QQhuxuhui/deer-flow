@@ -58,6 +58,11 @@ class Configuration:
     mcp_settings: dict = None  # MCP settings, including dynamic loaded tools
     report_style: str = ReportStyle.ACADEMIC.value  # Report style
     enable_deep_thinking: bool = False  # Whether to enable deep thinking
+    
+    # Data Analysis Module Configuration
+    database_config: Optional[dict] = None  # Database connection configuration
+    vector_store_path: str = "knowledge_base"  # Path to FAISS vector store
+    chart_output_path: str = "static/images"  # Path for saving generated charts
 
     @classmethod
     def from_runnable_config(
