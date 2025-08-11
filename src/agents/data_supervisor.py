@@ -7,11 +7,12 @@ Adapted from external data analysis module with DeerFlow integration.
 
 from typing import Literal, Optional
 from langchain_core.language_models import BaseChatModel
+from langgraph.graph import StateGraph
 from langgraph_supervisor import create_supervisor
 
 from src.config.configuration import Configuration
 from src.agents.data_agents import create_data_analysis_agents
-from src.llm import get_llm_by_type
+from src.llms.llm import get_llm_by_type
 
 
 def create_data_supervisor_prompt() -> str:

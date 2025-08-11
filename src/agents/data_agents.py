@@ -20,7 +20,7 @@ from src.config.configuration import Configuration
 from src.tools.data_analysis.sql_tools import sql_tools
 from src.tools.data_analysis.python_tools import python_tools  
 from src.tools.data_analysis.rag_tools import rag_tools, create_domain_retriever_tool
-from src.llm import get_llm_by_type
+from src.llms.llm import get_llm_by_type
 
 
 def create_rag_agent(config: Configuration, model: Optional[BaseChatModel] = None) -> StateGraph:

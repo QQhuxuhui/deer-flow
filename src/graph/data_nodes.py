@@ -7,7 +7,7 @@ Handles data analysis steps by delegating to the data analysis supervisor.
 
 from typing import Literal, Optional
 from langchain_core.runnables import RunnableConfig
-from langgraph.graph import Command
+from langgraph.types import Command
 
 from src.config.configuration import Configuration
 from src.agents.data_supervisor import create_data_supervisor
@@ -17,7 +17,7 @@ from src.graph.utils import get_current_step, get_configuration
 
 async def data_analysis_node(
     state: State, config: RunnableConfig
-) -> Command[Literal["research_team", "human_feedback", "report_writing"]]:
+) -> Command[Literal["research_team", "human_feedback"]]:
     """
     Data Analysis Node - Handle structured data analysis tasks.
     
@@ -114,7 +114,7 @@ async def data_analysis_node(
 
 async def lightweight_data_analysis_node(
     state: State, config: RunnableConfig  
-) -> Command[Literal["research_team", "human_feedback", "report_writing"]]:
+) -> Command[Literal["research_team", "human_feedback"]]:
     """
     Lightweight Data Analysis Node for development and testing.
     
