@@ -160,7 +160,7 @@ interface Step {
   need_search: boolean; // Must be explicitly set for each step
   title: string;
   description: string; // Specify exactly what data to collect. If the user input contains a link, please retain the full Markdown format when necessary.
-  step_type: "research" | "processing"; // Indicates the nature of the step
+  step_type: "research" | "processing"; // REQUIRED: Must be explicitly set for each step
 }
 
 interface Plan {
@@ -169,6 +169,20 @@ interface Plan {
   thought: string;
   title: string;
   steps: Step[]; // Research & Processing steps to get more context
+}
+```
+
+**CRITICAL**: Every step MUST include the `step_type` field:
+- Use `"step_type": "research"` for information gathering steps (when `need_search: true`)
+- Use `"step_type": "processing"` for data analysis and computation steps (when `need_search: false`)
+
+**Example Step Format**:
+```json
+{
+  "need_search": true,
+  "title": "Research Market Data",
+  "description": "Gather comprehensive market analysis data from reliable sources",
+  "step_type": "research"
 }
 ```
 
