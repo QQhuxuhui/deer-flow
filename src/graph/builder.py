@@ -21,7 +21,8 @@ from .intelligent_router import (
     intelligent_router_node,
     data_analysis_workflow_node,
     traditional_research_workflow_node,
-    hybrid_workflow_node
+    hybrid_workflow_node,
+    routing_confirmation_node
 )
 from .hybrid_workflow import (
     hybrid_planner_node,
@@ -116,6 +117,7 @@ def _build_base_graph():
     
     # Intelligent routing system
     builder.add_node("intelligent_router", intelligent_router_node)
+    builder.add_node("routing_confirmation", routing_confirmation_node)
     
     # Workflow-specific nodes
     builder.add_node("data_analysis_workflow", data_analysis_workflow_node)
@@ -149,6 +151,17 @@ def _build_base_graph():
         {
             "data_analysis": "data_analysis_workflow",
             "research": "traditional_research_workflow", 
+            "hybrid": "hybrid_workflow"
+        }
+    )
+    
+    # Routing confirmation connections
+    builder.add_conditional_edges(
+        "routing_confirmation",
+        lambda state: state.get("intent_classification", {}).get("workflow_type", "research"),
+        {
+            "data_analysis": "data_analysis_workflow",
+            "research": "traditional_research_workflow",
             "hybrid": "hybrid_workflow"
         }
     )

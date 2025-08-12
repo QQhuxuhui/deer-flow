@@ -73,19 +73,46 @@ async def intelligent_router_node(
             context=str(state.get("context", ""))
         )
         
-        # Store classification result in state
+        # Store detailed classification result in state for frontend display
+        alternative_routes = []
+        if intent_result.workflow_type == WorkflowType.DATA_ANALYSIS:
+            alternative_routes = ["traditional_research", "hybrid"]
+        elif intent_result.workflow_type == WorkflowType.TRADITIONAL_RESEARCH:
+            alternative_routes = ["data_analysis", "hybrid"]
+        else:  # HYBRID
+            alternative_routes = ["data_analysis", "traditional_research"]
+            
+        route_decision = {
+            "workflow_type": intent_result.workflow_type.value,
+            "complexity": intent_result.complexity.value,
+            "confidence": intent_result.confidence,
+            "reasoning": intent_result.reasoning,
+            "data_indicators": intent_result.data_indicators,
+            "research_indicators": intent_result.research_indicators,
+            "domain_keywords": intent_result.domain_keywords,
+            "query": user_query,
+            "route_taken": intent_result.workflow_type.value,
+            "alternative_routes": alternative_routes,
+            "requires_confirmation": intent_result.confidence < 0.7
+        }
+        
         updated_state = {
-            "intent_classification": {
-                "workflow_type": intent_result.workflow_type.value,
-                "complexity": intent_result.complexity.value,
-                "confidence": intent_result.confidence,
-                "reasoning": intent_result.reasoning,
-                "data_indicators": intent_result.data_indicators,
-                "research_indicators": intent_result.research_indicators,
-                "domain_keywords": intent_result.domain_keywords
+            "intent_classification": route_decision,
+            "route_decision_display": {
+                "show_routing_info": True,
+                "decision_data": route_decision
             }
         }
         
+        # Check if we need user confirmation for routing decision
+        if intent_result.confidence < 0.7:
+            # Low confidence - ask user to confirm routing decision
+            return Command(
+                update=updated_state,
+                goto="routing_confirmation"
+            )
+        
+        # High confidence - proceed with routing
         # Route based on workflow type
         if intent_result.workflow_type == WorkflowType.DATA_ANALYSIS:
             # Route directly to data analysis workflow
@@ -278,3 +305,118 @@ async def hybrid_workflow_node(
             },
             goto="hybrid_planner"
         )
+
+
+async def routing_confirmation_node(
+    state: State, config: RunnableConfig
+) -> Command[Literal["data_analysis_workflow", "traditional_research_workflow", "hybrid_workflow", "background_investigator"]]:
+    """
+    Routing Confirmation Node - Let user confirm or change routing decision.
+    
+    When intent classification confidence is low, this node presents the routing
+    decision to the user and allows them to confirm or select a different workflow.
+    """
+    try:
+        route_decision = state.get("intent_classification", {})
+        
+        # Create confirmation message with routing details
+        confirmation_message = f"""🤖 **智能路由分析结果**
+
+📝 **您的问题**: {route_decision.get('query', '未知查询')}
+
+🎯 **推荐工作流**: {get_workflow_display_name(route_decision.get('workflow_type', 'research'))}
+📊 **置信度**: {route_decision.get('confidence', 0.5):.0%}
+🧠 **分析依据**: {route_decision.get('reasoning', '未知原因')}
+
+📋 **发现的关键词**:
+- 数据指标: {', '.join(route_decision.get('data_indicators', []))}
+- 研究指标: {', '.join(route_decision.get('research_indicators', []))}
+- 领域词汇: {', '.join(route_decision.get('domain_keywords', []))}
+
+🔀 **可选工作流**:
+1. **数据分析** - 专业数据处理、统计分析、预测建模
+2. **传统研究** - 网络搜索、资料收集、文档整理  
+3. **混合模式** - 数据分析+外部研究的综合处理
+
+请确认使用推荐的工作流，或回复以下选项之一：
+- 回复 "1" 或 "数据分析" 选择数据分析工作流
+- 回复 "2" 或 "传统研究" 选择传统研究工作流  
+- 回复 "3" 或 "混合模式" 选择混合工作流
+- 回复 "确认" 或 "继续" 使用推荐的工作流"""
+
+        from langgraph.prebuilt import interrupt
+        from langchain_core.messages import HumanMessage
+        
+        # Show routing decision and wait for user confirmation
+        feedback = interrupt(confirmation_message)
+        
+        # Parse user feedback to determine final workflow
+        if feedback:
+            feedback_lower = str(feedback).lower().strip()
+            
+            # Parse user choice
+            if any(word in feedback_lower for word in ["1", "数据分析", "data"]):
+                chosen_workflow = "data_analysis"
+            elif any(word in feedback_lower for word in ["2", "传统研究", "research", "调研"]):
+                chosen_workflow = "research"
+            elif any(word in feedback_lower for word in ["3", "混合", "hybrid", "结合"]):
+                chosen_workflow = "hybrid"
+            elif any(word in feedback_lower for word in ["确认", "继续", "ok", "yes"]):
+                chosen_workflow = route_decision.get('workflow_type', 'research')
+            else:
+                # Default to original recommendation
+                chosen_workflow = route_decision.get('workflow_type', 'research')
+        else:
+            chosen_workflow = route_decision.get('workflow_type', 'research')
+        
+        # Update state with final routing decision
+        final_decision = route_decision.copy()
+        final_decision['workflow_type'] = chosen_workflow
+        final_decision['user_confirmed'] = True
+        final_decision['confidence'] = 0.9  # User confirmed, high confidence
+        
+        # Route to chosen workflow
+        if chosen_workflow == "data_analysis":
+            return Command(
+                update={
+                    "intent_classification": final_decision,
+                    "messages": [HumanMessage(content=f"已确认使用数据分析工作流处理您的问题。", name="router")]
+                },
+                goto="data_analysis_workflow"
+            )
+        elif chosen_workflow == "hybrid":
+            return Command(
+                update={
+                    "intent_classification": final_decision,
+                    "messages": [HumanMessage(content=f"已确认使用混合工作流处理您的问题。", name="router")]
+                },
+                goto="hybrid_workflow"
+            )
+        else:  # traditional research
+            return Command(
+                update={
+                    "intent_classification": final_decision,
+                    "messages": [HumanMessage(content=f"已确认使用传统研究工作流处理您的问题。", name="router")]
+                },
+                goto="traditional_research_workflow"
+            )
+            
+    except Exception as e:
+        error_msg = f"路由确认失败: {str(e)}"
+        return Command(
+            update={
+                "observations": state.get("observations", []) + [error_msg],
+                "errors": state.get("errors", []) + [f"routing_confirmation: {str(e)}"]
+            },
+            goto="traditional_research_workflow"  # Fallback
+        )
+
+
+def get_workflow_display_name(workflow_type: str) -> str:
+    """Get user-friendly workflow display name."""
+    workflow_names = {
+        "data_analysis": "数据分析工作流",
+        "research": "传统研究工作流", 
+        "hybrid": "混合工作流"
+    }
+    return workflow_names.get(workflow_type, "传统研究工作流")

@@ -53,33 +53,35 @@ class IntentAnalysisInput(BaseModel):
 
 def create_intent_classifier_prompt() -> str:
     """Create system prompt for intent classification."""
-    return """你是一个智能任务路由分析师，负责分析用户查询并确定最佳的处理工作流。
+    return """你是一个专业的智能任务路由分析师，负责分析用户查询并确定最佳的处理工作流。
 
-**分析维度：**
+**核心分析维度：**
 
-1. **数据分析指标** (DATA_ANALYSIS):
-   - 数据库查询、SQL操作
-   - 统计分析、数据挖掘
-   - 可视化图表、报表生成
-   - 客户分析、流失预测
-   - 关键词：数据库、查询、统计、图表、分析、预测、客户、流失、可视化、报告
+1. **数据分析指标** (DATA_ANALYSIS) - 优先级最高:
+   - 🎯 强烈信号：数据库查询、SQL操作、统计分析、预测建模、可视化图表
+   - 📊 关键词：数据库、查询、统计、分析、预测、模型、流失、客户、可视化、图表、趋势、报表
+   - 💡 场景：需要对现有数据进行分析、统计、预测或可视化的任务
+   - ⚠️ 重要：只要涉及数据分析、统计、预测、建模，优先选择此类型
 
 2. **传统研究指标** (TRADITIONAL_RESEARCH):
-   - 网络搜索、资料收集
-   - 技术调研、市场分析
-   - 文档整理、内容创作
-   - 关键词：搜索、调研、收集、整理、创作、市场、技术、文档
+   - 🔍 强烈信号：网络搜索、资料收集、文献调研、市场调查
+   - 📚 关键词：搜索、调研、收集、整理、创作、市场、技术、文档、研究
+   - 💡 场景：需要从外部获取信息、调研资料的任务
 
 3. **混合任务指标** (HYBRID):
-   - 需要数据分析+研究结合
-   - 多领域综合分析
-   - 复杂业务问题解决
-   - 关键词：综合分析、多维度、结合、整合
+   - 🔄 需要数据分析+外部研究结合
+   - 🎯 关键词：综合分析、多维度、结合、整合、对比、全面
+   - 💡 场景：既需要内部数据分析，又需要外部市场研究
+
+**分类优先级规则：**
+1. 如果查询包含"分析、统计、预测、模型、流失、数据"等词汇 → DATA_ANALYSIS
+2. 如果明确要求"调研、搜索、收集资料" → TRADITIONAL_RESEARCH  
+3. 如果同时需要数据分析和外部研究 → HYBRID
 
 **复杂度评估：**
-- SIMPLE: 单一明确任务，单个领域
-- MODERATE: 多步骤任务，涉及2-3个方面
-- COMPLEX: 多领域综合，需要深度分析
+- SIMPLE: 单一明确任务，单个领域，< 10个字
+- MODERATE: 多步骤任务，2-3个方面，10-20个字
+- COMPLEX: 多领域综合，需要深度分析，> 20个字
 
 **输出格式：**
 严格按照以下JSON格式输出：
@@ -87,29 +89,18 @@ def create_intent_classifier_prompt() -> str:
 {
     "workflow_type": "data_analysis|research|hybrid",
     "complexity": "simple|moderate|complex", 
-    "confidence": 0.8,
-    "reasoning": "分析依据和逻辑",
+    "confidence": 0.9,
+    "reasoning": "具体的分析依据和逻辑",
     "data_indicators": ["数据相关关键词"],
     "research_indicators": ["研究相关关键词"],
     "domain_keywords": ["领域专业术语"]
 }
 ```
 
-**示例分析：**
-
-用户查询："分析电信客户流失情况，包括流失率统计和预测模型"
-输出：
-```json
-{
-    "workflow_type": "data_analysis",
-    "complexity": "moderate",
-    "confidence": 0.95,
-    "reasoning": "明确的数据分析任务，涉及数据库查询、统计分析和预测模型建立",
-    "data_indicators": ["分析", "流失", "统计", "预测模型"],
-    "research_indicators": [],
-    "domain_keywords": ["电信", "客户流失", "流失率"]
-}
-```
+**关键提醒：**
+- 优先考虑DATA_ANALYSIS：任何涉及数据分析、统计、预测的任务都应该选择此类型
+- 置信度计算：强信号0.9+，中等信号0.7-0.8，弱信号0.5-0.6
+- reasoning字段必须说明选择理由
 
 请分析用户查询并给出分类结果："""
 
@@ -179,46 +170,78 @@ async def classify_user_intent(
 
 
 def _fallback_classification(user_query: str) -> IntentClassification:
-    """Fallback classification using keyword matching."""
+    """Enhanced fallback classification using weighted keyword matching."""
     query_lower = user_query.lower()
     
-    # Data analysis keywords
-    data_keywords = [
-        "数据库", "查询", "sql", "统计", "分析", "图表", "可视化", 
-        "流失", "预测", "客户", "报告", "数据"
-    ]
+    # Enhanced data analysis keywords with weights
+    data_keywords = {
+        # High confidence indicators (weight 3)
+        "数据库": 3, "sql": 3, "查询": 2, "统计": 3, "预测": 3, "模型": 2,
+        "可视化": 3, "图表": 2, "报表": 2, "仪表板": 3, "dashboard": 3,
+        # Medium confidence indicators (weight 2)  
+        "分析": 2, "流失": 2, "客户": 1.5, "数据": 2, "趋势": 1.5,
+        "挖掘": 2, "建模": 3, "算法": 2, "回归": 3, "分类": 2,
+        # Domain specific (weight 2.5)
+        "电信": 1.5, "金融": 1.5, "零售": 1.5, "用户行为": 2,
+    }
     
-    # Research keywords  
-    research_keywords = [
-        "搜索", "调研", "收集", "整理", "市场", "技术", "文档", 
-        "报告", "研究", "分析"
-    ]
+    # Enhanced research keywords with weights  
+    research_keywords = {
+        # High confidence indicators (weight 3)
+        "调研": 3, "搜索": 2, "收集": 2, "整理": 2, "研究": 2,
+        "市场": 2, "技术": 1.5, "文档": 1.5, "资料": 2,
+        # Medium confidence indicators (weight 2)
+        "趋势": 1.5, "行业": 2, "竞品": 3, "分析": 1, "报告": 1.5,
+        "综述": 2, "调查": 2, "访谈": 2, "问卷": 2,
+    }
     
-    data_score = sum(1 for kw in data_keywords if kw in query_lower)
-    research_score = sum(1 for kw in research_keywords if kw in query_lower)
+    # Calculate weighted scores
+    data_score = sum(weight for keyword, weight in data_keywords.items() if keyword in query_lower)
+    research_score = sum(weight for keyword, weight in research_keywords.items() if keyword in query_lower)
     
-    if data_score > research_score and data_score >= 2:
+    # Enhanced decision logic with better thresholds
+    if data_score >= 4 and data_score > research_score * 1.2:  # Strong data analysis signal
         workflow_type = WorkflowType.DATA_ANALYSIS
-    elif research_score > data_score and research_score >= 2:
+        confidence = min(0.9, 0.6 + (data_score - 4) * 0.05)
+    elif research_score >= 4 and research_score > data_score * 1.2:  # Strong research signal
         workflow_type = WorkflowType.TRADITIONAL_RESEARCH
-    elif data_score > 0 and research_score > 0:
+        confidence = min(0.9, 0.6 + (research_score - 4) * 0.05)
+    elif data_score >= 2 and research_score >= 2:  # Both present - hybrid
         workflow_type = WorkflowType.HYBRID
+        confidence = min(0.85, 0.7 + abs(data_score - research_score) * 0.02)
+    elif data_score > research_score and data_score >= 1.5:
+        workflow_type = WorkflowType.DATA_ANALYSIS
+        confidence = min(0.8, 0.5 + data_score * 0.1)
+    elif research_score > data_score and research_score >= 1.5:
+        workflow_type = WorkflowType.TRADITIONAL_RESEARCH
+        confidence = min(0.8, 0.5 + research_score * 0.1)
     else:
-        workflow_type = WorkflowType.TRADITIONAL_RESEARCH  # Default
+        # Default to research with low confidence
+        workflow_type = WorkflowType.TRADITIONAL_RESEARCH
+        confidence = 0.4
     
-    # Simple complexity assessment
+    # Enhanced complexity assessment
     complexity = TaskComplexity.SIMPLE
-    if len(query_lower.split()) > 10:
-        complexity = TaskComplexity.MODERATE
-    if any(word in query_lower for word in ["综合", "多维", "复杂", "深度"]):
+    complexity_indicators = ["综合", "多维", "复杂", "深度", "全面", "系统", "完整"]
+    domain_count = len([k for k in ["电信", "金融", "零售", "医疗", "教育"] if k in query_lower])
+    
+    if len(query_lower.split()) > 15 or any(word in query_lower for word in complexity_indicators):
         complexity = TaskComplexity.COMPLEX
+    elif len(query_lower.split()) > 8 or domain_count > 1:
+        complexity = TaskComplexity.MODERATE
+    
+    # Extract found keywords for transparency
+    found_data_keywords = [kw for kw in data_keywords.keys() if kw in query_lower]
+    found_research_keywords = [kw for kw in research_keywords.keys() if kw in query_lower]
+    
+    reasoning = f"关键词分析: 数据({data_score}分) vs 研究({research_score}分)"
     
     return IntentClassification(
         workflow_type=workflow_type,
         complexity=complexity,
-        confidence=0.7,
-        reasoning="基于关键词匹配的后备分类",
-        data_indicators=[kw for kw in data_keywords if kw in query_lower],
-        research_indicators=[kw for kw in research_keywords if kw in query_lower],
-        domain_keywords=[]
+        confidence=confidence,
+        reasoning=reasoning,
+        data_indicators=found_data_keywords,
+        research_indicators=found_research_keywords,
+        domain_keywords=[k for k in ["电信", "金融", "零售", "医疗"] if k in query_lower]
     )
