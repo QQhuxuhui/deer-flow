@@ -9,6 +9,9 @@
 - [State Management](#state-management)
 - [Agent Orchestration](#agent-orchestration)
 - [Tool Integration](#tool-integration)
+- [MCP Integration](#mcp-integration)
+- [RAG System](#rag-system)
+- [Data Analysis Module](#data-analysis-module)
 - [Extension Points](#extension-points)
 - [Performance Considerations](#performance-considerations)
 - [Deployment Architecture](#deployment-architecture)
@@ -299,6 +302,403 @@ mcp_settings = {
 - **Agent-Specific**: Tools assigned to specific agent types
 - **Dynamic Loading**: Runtime tool discovery and registration
 - **Fallback Handling**: Graceful degradation when tools unavailable
+
+## MCP Integration
+
+### MCP Architecture Overview
+
+The Model Context Protocol (MCP) integration enables DeerFlow to dynamically discover and integrate external tools and services. This provides extensibility without requiring core system modifications.
+
+```mermaid
+graph TB
+    A[DeerFlow Core] --> B[MCP Client Manager]
+    B --> C[MCP Server 1<br/>Filesystem]
+    B --> D[MCP Server 2<br/>Git Operations]  
+    B --> E[MCP Server 3<br/>Database Access]
+    B --> F[MCP Server N<br/>Custom Tools]
+    
+    C --> G[File Operations<br/>read, write, list]
+    D --> H[Git Commands<br/>commit, push, diff]
+    E --> I[DB Queries<br/>select, insert, update] 
+    F --> J[Domain Tools<br/>custom logic]
+```
+
+### MCP Integration Points
+
+#### 1. Configuration Layer (`src/config/configuration.py`)
+```python
+@dataclass(kw_only=True)
+class Configuration:
+    mcp_settings: dict = None  # MCP server configurations
+    
+# Example MCP configuration
+mcp_settings = {
+    "servers": {
+        "filesystem": {
+            "command": "uv",
+            "args": ["tool", "run", "mcp-server-filesystem", "/workspace"]
+        },
+        "git": {
+            "command": "uvx", 
+            "args": ["mcp-server-git", "--repository", "/project"]
+        }
+    }
+}
+```
+
+#### 2. Dynamic Tool Loading (`src/config/tools.py`)
+```python
+def load_mcp_tools(mcp_settings: dict) -> List[Tool]:
+    """Dynamically load tools from MCP servers."""
+    tools = []
+    for server_name, config in mcp_settings.get("servers", {}).items():
+        try:
+            # Connect to MCP server
+            client = MCPClient(config)
+            
+            # Discover available tools
+            available_tools = client.list_tools()
+            
+            # Convert MCP tools to LangChain tools
+            for mcp_tool in available_tools:
+                langchain_tool = adapt_mcp_tool(mcp_tool)
+                tools.append(langchain_tool)
+                
+        except Exception as e:
+            logger.warning(f"Failed to load MCP server {server_name}: {e}")
+    
+    return tools
+```
+
+#### 3. Runtime Integration (`src/graph/nodes.py`)
+```python
+async def researcher_node(state: State, config: RunnableConfig):
+    """Research node with MCP tool integration."""
+    
+    # Load base tools
+    base_tools = [search_tool, crawl_tool]
+    
+    # Add MCP tools dynamically
+    deer_config = get_configuration(config)
+    if deer_config.mcp_settings:
+        mcp_tools = load_mcp_tools(deer_config.mcp_settings)
+        base_tools.extend(mcp_tools)
+    
+    return await _setup_and_execute_agent_step(
+        state, config, "researcher", base_tools
+    )
+```
+
+### MCP Use Cases
+
+#### A. Development Workflow Integration
+- **Git Operations**: Commit, push, branch management
+- **File Management**: Read, write, directory operations
+- **Code Analysis**: Static analysis, linting, formatting
+
+#### B. Data Access and Integration
+- **Database Connectivity**: SQL queries, data extraction
+- **API Integration**: REST/GraphQL API calls
+- **Cloud Services**: AWS, Azure, GCP service integration
+
+#### C. Custom Business Logic
+- **Domain-Specific Tools**: Industry-specific calculations
+- **Internal System Integration**: ERP, CRM system connectivity
+- **Workflow Automation**: Custom process automation
+
+## RAG System
+
+### RAG Architecture Overview
+
+The Retrieval-Augmented Generation system enhances DeerFlow's knowledge capabilities by integrating external knowledge sources through vector similarity search.
+
+```mermaid
+graph TB
+    A[User Query] --> B[RAG System]
+    B --> C[Vector Store<br/>FAISS/Chroma]
+    B --> D[Document Sources]
+    
+    D --> E[Web Crawling<br/>http://urls]
+    D --> F[File System<br/>file://paths] 
+    D --> G[RAG Protocol<br/>rag://resources]
+    D --> H[API Sources<br/>api://endpoints]
+    
+    C --> I[Similarity Search]
+    I --> J[Retrieved Context]
+    J --> K[Enhanced LLM Input]
+    K --> L[Knowledge-Augmented Response]
+```
+
+### RAG Integration Points
+
+#### 1. Resource Configuration (`src/rag/retriever.py`)
+```python
+@dataclass
+class Resource:
+    """RAG resource configuration."""
+    url: str           # Resource URL (rag://, http://, file://)
+    description: str   # Human-readable description
+    metadata: dict = field(default_factory=dict)  # Additional metadata
+
+# Example resource configuration
+resources = [
+    Resource(
+        url="rag://company-docs", 
+        description="Internal company documentation"
+    ),
+    Resource(
+        url="http://docs.example.com/api", 
+        description="API documentation"
+    ),
+    Resource(
+        url="file:///workspace/manuals/", 
+        description="Product manuals"
+    )
+]
+```
+
+#### 2. Knowledge Base Construction (`src/rag/builder.py`)
+```python
+async def build_knowledge_base(resources: List[Resource]) -> VectorStore:
+    """Build vector store from configured resources."""
+    all_documents = []
+    
+    for resource in resources:
+        documents = await process_resource(resource)
+        all_documents.extend(documents)
+    
+    # Create embeddings and vector store
+    embeddings = OpenAIEmbeddings()
+    vector_store = FAISS.from_documents(all_documents, embeddings)
+    
+    return vector_store
+
+async def process_resource(resource: Resource) -> List[Document]:
+    """Process different resource types."""
+    if resource.url.startswith("rag://"):
+        return await load_rag_resource(resource)
+    elif resource.url.startswith("http"):
+        return await crawl_web_resource(resource)
+    elif resource.url.startswith("file://"):
+        return await load_file_resource(resource)
+    else:
+        raise ValueError(f"Unsupported resource type: {resource.url}")
+```
+
+#### 3. Retrieval Tool Integration (`src/tools/retriever.py`)
+```python
+@tool
+def rag_retrieval_tool(
+    query: str, 
+    k: int = 5,
+    similarity_threshold: float = 0.7
+) -> str:
+    """Retrieve relevant documents from RAG knowledge base."""
+    
+    # Get configured vector store
+    vector_store = get_current_vector_store()
+    
+    if not vector_store:
+        return "No knowledge base available for retrieval."
+    
+    # Perform similarity search
+    relevant_docs = vector_store.similarity_search_with_score(
+        query, k=k
+    )
+    
+    # Filter by similarity threshold
+    filtered_docs = [
+        (doc, score) for doc, score in relevant_docs 
+        if score >= similarity_threshold
+    ]
+    
+    if not filtered_docs:
+        return f"No relevant documents found for: {query}"
+    
+    # Format retrieved content
+    formatted_content = []
+    for i, (doc, score) in enumerate(filtered_docs, 1):
+        formatted_content.append(
+            f"**Source {i}** (relevance: {score:.3f}):\n"
+            f"{doc.page_content}\n"
+            f"*Metadata: {doc.metadata}*\n"
+        )
+    
+    return "\n\n".join(formatted_content)
+```
+
+### RAG Use Cases
+
+#### A. Domain-Specific Knowledge Enhancement
+- **Technical Documentation**: API references, user manuals
+- **Business Knowledge**: Company policies, procedures
+- **Academic Research**: Scientific papers, research databases
+
+#### B. Dynamic Context Enrichment  
+- **Real-time Updates**: Latest news, market data
+- **Personalized Context**: User-specific documents, preferences
+- **Multi-lingual Support**: Documents in multiple languages
+
+#### C. Specialized Knowledge Domains
+- **Legal Documents**: Contracts, regulations, case law
+- **Medical Literature**: Research papers, clinical guidelines
+- **Financial Data**: Reports, analysis, market trends
+
+## Data Analysis Module
+
+### Data Analysis Architecture
+
+The integrated data analysis module extends DeerFlow with specialized capabilities for structured data processing, statistical analysis, and visualization.
+
+```mermaid
+graph TB
+    A[Data Analysis Request] --> B[Data Analysis Node]
+    B --> C[Data Supervisor]
+    C --> D[RAG Agent<br/>Domain Knowledge]
+    C --> E[SQL Agent<br/>Database Operations] 
+    C --> F[Python Agent<br/>Analysis & Viz]
+    
+    D --> G[FAISS Vector Store<br/>Business Knowledge]
+    E --> H[MySQL Database<br/>Structured Data]
+    F --> I[Analysis Results<br/>Charts & Reports]
+    
+    G --> J[Business Context]
+    H --> K[Raw Data]
+    I --> L[Visualizations]
+    
+    J --> M[Enhanced Analysis]
+    K --> M
+    L --> M
+```
+
+### Data Analysis Integration Points
+
+#### 1. Step Type Extension (`src/prompts/planner_model.py`)
+```python
+class StepType(str, Enum):
+    RESEARCH = "research"
+    PROCESSING = "processing"
+    DATA_ANALYSIS = "data_analysis"  # New step type
+
+# Planner can now identify data analysis tasks
+{
+    "step_type": "data_analysis",
+    "title": "Customer Churn Analysis", 
+    "description": "Query customer database, perform churn analysis, generate visualizations"
+}
+```
+
+#### 2. Specialized Agent Factory (`src/agents/data_agents.py`)
+```python
+def create_data_analysis_agents(config: Configuration):
+    """Create specialized data analysis agents."""
+    
+    # RAG Agent - Domain knowledge expert
+    rag_agent = create_react_agent(
+        model=get_llm_by_type("coordinator"),
+        tools=[domain_knowledge_tool],
+        prompt=RAG_AGENT_PROMPT
+    )
+    
+    # SQL Agent - Database operations expert  
+    sql_agent = create_react_agent(
+        model=get_llm_by_type("coder"),
+        tools=[sql_query_tool, extract_data_tool],
+        prompt=SQL_AGENT_PROMPT
+    )
+    
+    # Python Agent - Analysis and visualization expert
+    python_agent = create_react_agent(
+        model=get_llm_by_type("coder"), 
+        tools=[python_execution_tool, visualization_tool],
+        prompt=PYTHON_AGENT_PROMPT
+    )
+    
+    return rag_agent, sql_agent, python_agent
+```
+
+#### 3. Multi-Agent Orchestration (`src/agents/data_supervisor.py`)
+```python
+def create_data_supervisor(config: Configuration) -> StateGraph:
+    """Create intelligent data analysis supervisor."""
+    
+    # Create specialized agents
+    rag_agent, sql_agent, python_agent = create_data_analysis_agents(config)
+    
+    # Create supervisor with intelligent routing
+    supervisor = create_supervisor(
+        model=get_llm_by_type("coordinator"),
+        agents=[rag_agent, sql_agent, python_agent],
+        prompt=DATA_SUPERVISOR_PROMPT,
+        add_handoff_back_messages=True
+    )
+    
+    return supervisor.compile()
+```
+
+### Data Analysis Workflow
+
+#### 1. Automatic Task Routing
+```python
+def continue_to_running_research_team(state: State):
+    """Enhanced routing with data analysis support."""
+    incomplete_step = get_incomplete_step(state)
+    
+    if incomplete_step.step_type == StepType.RESEARCH:
+        return "researcher"
+    elif incomplete_step.step_type == StepType.PROCESSING:
+        return "coder"  
+    elif incomplete_step.step_type == StepType.DATA_ANALYSIS:
+        return "data_analyst"  # Route to specialized data analysis node
+    return "planner"
+```
+
+#### 2. Multi-Modal Output Generation
+```python
+async def data_analysis_node(state: State, config: RunnableConfig):
+    """Execute comprehensive data analysis."""
+    
+    # Create data supervisor
+    supervisor = create_data_supervisor(config)
+    
+    # Execute analysis workflow
+    result = await supervisor.ainvoke({
+        "messages": [{"role": "user", "content": current_step.description}]
+    })
+    
+    # Extract results including charts and insights
+    analysis_content = result["messages"][-1].content
+    
+    # Update state with comprehensive results
+    return Command(
+        update={
+            "observations": state.get("observations", []) + [analysis_content],
+            "data_analysis_results": {
+                "content": analysis_content,
+                "charts": extract_chart_paths(analysis_content),
+                "insights": extract_insights(analysis_content)
+            }
+        },
+        goto="research_team"
+    )
+```
+
+### Data Analysis Use Cases
+
+#### A. Business Intelligence
+- **Customer Segmentation**: RFM analysis, behavioral clustering
+- **Sales Analytics**: Trend analysis, forecasting
+- **Performance Metrics**: KPI tracking, dashboard generation
+
+#### B. Scientific Research
+- **Statistical Analysis**: Hypothesis testing, correlation analysis
+- **Data Visualization**: Publication-ready charts and graphs
+- **Experimental Design**: A/B testing, statistical power analysis
+
+#### C. Financial Analysis
+- **Risk Assessment**: Portfolio analysis, VaR calculations
+- **Market Research**: Price trend analysis, volatility modeling
+- **Compliance Reporting**: Regulatory reporting, audit trails
 
 ## Extension Points
 

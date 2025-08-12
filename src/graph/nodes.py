@@ -127,9 +127,14 @@ def planner_node(
     logger.info(f"Planner response: {full_response}")
 
     try:
-        curr_plan = json.loads(repair_json_output(full_response))
-    except json.JSONDecodeError:
-        logger.warning("Planner response is not a valid JSON")
+        # Ensure we have a valid JSON before proceeding
+        repaired_response = repair_json_output(full_response)
+        curr_plan = json.loads(repaired_response)
+        # Use the repaired JSON as the response content for consistency
+        full_response = repaired_response
+    except json.JSONDecodeError as e:
+        logger.warning(f"Planner response is not a valid JSON: {e}")
+        logger.debug(f"Failed to parse response: {full_response[:500]}...")
         if plan_iterations > 0:
             return Command(goto="reporter")
         else:
@@ -285,10 +290,40 @@ def reporter_node(state: State, config: RunnableConfig):
     logger.info("Reporter write final report")
     configurable = Configuration.from_runnable_config(config)
     current_plan = state.get("current_plan")
+    
+    # Handle case where current_plan might be a string instead of Plan object
+    plan_title = "Research Task"
+    plan_description = "Complete the research and analysis as requested."
+    
+    if isinstance(current_plan, str):
+        # Try to parse the string as JSON to get plan details
+        try:
+            import json
+            from src.utils.json_utils import repair_json_output
+            plan_dict = json.loads(repair_json_output(current_plan))
+            plan_title = plan_dict.get("title", plan_title)
+            plan_description = plan_dict.get("thought", plan_dict.get("description", plan_description))
+        except Exception as e:
+            logger.warning(f"Could not parse current_plan as JSON: {e}")
+            # Use default values already set above
+    elif current_plan and hasattr(current_plan, 'title'):
+        # current_plan is a Plan object
+        plan_title = current_plan.title
+        plan_description = getattr(current_plan, 'thought', plan_description)
+    else:
+        # current_plan is None or invalid, use workflow type from state
+        workflow_type = state.get("workflow_type", "research")
+        if workflow_type == "data_analysis_only":
+            plan_title = "Data Analysis Report"
+            plan_description = "Comprehensive data analysis and insights report."
+        elif workflow_type == "hybrid":
+            plan_title = "Integrated Analysis Report"
+            plan_description = "Combined data analysis and research findings report."
+    
     input_ = {
         "messages": [
             HumanMessage(
-                f"# Research Requirements\n\n## Task\n\n{current_plan.title}\n\n## Description\n\n{current_plan.thought}"
+                f"# Research Requirements\n\n## Task\n\n{plan_title}\n\n## Description\n\n{plan_description}"
             )
         ],
         "locale": state.get("locale", "en-US"),
@@ -330,18 +365,32 @@ async def _execute_agent_step(
 ) -> Command[Literal["research_team"]]:
     """Helper function to execute a step using the specified agent."""
     current_plan = state.get("current_plan")
-    plan_title = current_plan.title
-    observations = state.get("observations", [])
-
-    # Find the first unexecuted step
+    
+    # Handle case where current_plan might be a string instead of Plan object
+    plan_title = "Research Task"
     current_step = None
     completed_steps = []
-    for step in current_plan.steps:
-        if not step.execution_res:
-            current_step = step
-            break
-        else:
-            completed_steps.append(step)
+    
+    if isinstance(current_plan, str):
+        # If current_plan is a string, we can't execute steps
+        logger.error("Cannot execute agent step: current_plan is a string, not a Plan object")
+        return Command(goto="research_team")
+    elif current_plan and hasattr(current_plan, 'title') and hasattr(current_plan, 'steps'):
+        # current_plan is a Plan object
+        plan_title = current_plan.title
+        
+        # Find the first unexecuted step
+        for step in current_plan.steps:
+            if not step.execution_res:
+                current_step = step
+                break
+            else:
+                completed_steps.append(step)
+    else:
+        logger.error("Cannot execute agent step: current_plan is invalid")
+        return Command(goto="research_team")
+    
+    observations = state.get("observations", [])
 
     if not current_step:
         logger.warning("No unexecuted step found")
